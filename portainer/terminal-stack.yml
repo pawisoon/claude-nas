@@ -1,0 +1,44 @@
+# Portainer stack — TERMINAL (ttyd: real Claude Code TUI in a browser), pulling from GHCR.
+#
+# Portainer → Stacks → Add stack → name it "claude-nas-terminal" → paste this in the
+# web editor → fill the Environment variables (below) → Deploy.
+#
+# Env vars to set in Portainer:
+#   PUID, PGID                  e.g. 1026 / 100  (run `id` on the NAS)
+#   CLAUDE_CODE_OAUTH_TOKEN     from `claude setup-token`
+#   TTYD_USER, TTYD_PASS        web-terminal login (it's a real shell — use a strong pass)
+#   WORKSPACE_DIR               /volume1/docker/claude-nas/workspace
+#   CONFIG_DIR                  /volume1/docker/claude-nas/config
+#   TTYD_PORT                   7681
+#   TTYD_SHELL (optional)       bash (default) or claude
+
+services:
+  terminal:
+    image: ghcr.io/pawisoon/claude-nas-terminal:latest
+    container_name: claude-terminal
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - TTYD_USER=${TTYD_USER}
+      - TTYD_PASS=${TTYD_PASS}
+      - TTYD_SHELL=${TTYD_SHELL:-bash}
+      - DISABLE_AUTOUPDATER=1
+    ports:
+      - "${TTYD_PORT:-7681}:7681"
+    volumes:
+      - ${WORKSPACE_DIR}:/workspace
+      - ${CONFIG_DIR}:/config
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "curl -s -o /dev/null http://localhost:7681 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  claude-net:
+    driver: bridge

@@ -8,6 +8,9 @@ npm-debug.log*
 # Claude Code local (machine-specific) settings
 .claude/settings.local.json
 
+# Local test data (created when verifying the stack locally)
+/.local-test
+
 # Local data (if you ever point the mounts inside the repo)
 /data
 /workspace

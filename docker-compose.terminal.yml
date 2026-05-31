@@ -1,0 +1,44 @@
+# Terminal variant — the real Claude Code TUI in a browser via ttyd.
+# Deploy:  docker compose -f docker-compose.terminal.yml up -d --build
+# Separate compose project from the chat build, so the two can run side by side.
+name: claude-nas-terminal
+
+services:
+  terminal:
+    build: ./ttyd
+    container_name: claude-terminal
+    restart: unless-stopped
+    # Run as the NAS user that owns your shared folders (correct file ownership;
+    # also keeps Claude Code non-root).
+    user: "${PUID}:${PGID}"
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      # REQUIRED — the terminal is a shell, so it's behind HTTP basic auth.
+      - TTYD_USER=${TTYD_USER}
+      - TTYD_PASS=${TTYD_PASS}
+      # bash (default) = shell in /workspace, type `claude`. claude = jump straight in.
+      - TTYD_SHELL=${TTYD_SHELL:-bash}
+      - DISABLE_AUTOUPDATER=1
+    ports:
+      - "${TTYD_PORT:-7681}:7681"
+    volumes:
+      # The ONLY directory the terminal/agent can see. This is the isolation.
+      - ${WORKSPACE_DIR}:/workspace
+      # Persists Claude Code config/auth across restarts (also lets you `claude` login once).
+      - ${CONFIG_DIR}:/config
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claude-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "curl -s -o /dev/null http://localhost:7681 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  claude-net:
+    driver: bridge

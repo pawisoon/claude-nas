@@ -1,0 +1,64 @@
+# Portainer stack — CHAT (Open WebUI + bridge), pulling prebuilt images from GHCR.
+#
+# Portainer → Stacks → Add stack → name it "claude-nas-chat" → paste this in the
+# web editor → fill the Environment variables (below) → Deploy.
+#
+# Env vars to set in Portainer:
+#   PUID, PGID                  e.g. 1026 / 100  (run `id` on the NAS)
+#   CLAUDE_CODE_OAUTH_TOKEN     from `claude setup-token`
+#   BRIDGE_API_KEY              any long random string
+#   WORKSPACE_DIR               /volume1/docker/claude-nas/workspace
+#   CONFIG_DIR                  /volume1/docker/claude-nas/config
+#   WEBUI_DATA_DIR              /volume1/docker/claude-nas/webui
+#   WEBUI_PORT                  3000
+#   CLAUDE_MODEL (optional)     sonnet | opus | haiku
+
+services:
+  bridge:
+    image: ghcr.io/pawisoon/claude-nas-bridge:latest
+    container_name: claude-bridge
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - PORT=8000
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
+      - CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
+      - ALLOWED_TOOLS=${ALLOWED_TOOLS:-}
+      - SHOW_TOOL_CALLS=${SHOW_TOOL_CALLS:-true}
+      - MAX_TURNS=${MAX_TURNS:-40}
+    volumes:
+      - ${WORKSPACE_DIR}:/workspace
+      - ${CONFIG_DIR}:/config
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: claude-webui
+    restart: unless-stopped
+    depends_on: [bridge]
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://bridge:8000/v1
+      - OPENAI_API_KEY=${BRIDGE_API_KEY}
+      - ENABLE_OLLAMA_API=false
+      - WEBUI_NAME=Claude NAS
+      - WEBUI_SECRET_KEY=${BRIDGE_API_KEY}
+    volumes:
+      - ${WEBUI_DATA_DIR}:/app/backend/data
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+
+networks:
+  claude-net:
+    driver: bridge
