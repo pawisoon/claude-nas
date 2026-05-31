@@ -1,0 +1,70 @@
+name: claude-nas
+
+services:
+  # ── The agent: Claude Code wrapped behind an OpenAI-compatible API ──────────
+  # Not published to the LAN. Reachable only by open-webui on the internal network.
+  bridge:
+    build: ./bridge
+    container_name: claude-bridge
+    restart: unless-stopped
+    # Run as the NAS user that owns your shared folders, so files land with
+    # correct ownership. Also satisfies Claude Code's refusal to bypass
+    # permissions while running as root.
+    user: "${PUID}:${PGID}"
+    environment:
+      - PORT=8000
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
+      # bypassPermissions = the agent can act unattended INSIDE the sandbox.
+      # The sandbox (only /workspace mounted, non-root, no docker socket) is the
+      # safety boundary. To lock down instead, set CLAUDE_PERMISSION_MODE=dontAsk
+      # and list ALLOWED_TOOLS (e.g. "Read,Grep,Glob").
+      - CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
+      - ALLOWED_TOOLS=${ALLOWED_TOOLS:-}
+      - SHOW_TOOL_CALLS=${SHOW_TOOL_CALLS:-true}
+      - MAX_TURNS=${MAX_TURNS:-40}
+    volumes:
+      # The ONLY directory the agent can see. This is the isolation.
+      - ${WORKSPACE_DIR}:/workspace
+      # Persists Claude Code config/auth cache across restarts.
+      - ${CONFIG_DIR}:/config
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claude-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── The chat UI (Ollama-style) ──────────────────────────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: claude-webui
+    restart: unless-stopped
+    depends_on:
+      - bridge
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://bridge:8000/v1
+      - OPENAI_API_KEY=${BRIDGE_API_KEY}
+      # We only want Claude here — no local Ollama backend.
+      - ENABLE_OLLAMA_API=false
+      - WEBUI_NAME=Claude NAS
+      - WEBUI_SECRET_KEY=${BRIDGE_API_KEY}
+    volumes:
+      - ${WEBUI_DATA_DIR}:/app/backend/data
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claude-net
+
+networks:
+  claude-net:
+    driver: bridge

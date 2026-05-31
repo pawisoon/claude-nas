@@ -1,0 +1,17 @@
+{
+  "name": "claude-nas-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible bridge exposing Claude Code (Agent SDK) to Open WebUI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0"
+  }
+}

@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Node
+**/node_modules
+npm-debug.log*
+
+# Claude Code local (machine-specific) settings
+.claude/settings.local.json
+
+# Local data (if you ever point the mounts inside the repo)
+/data
+/workspace
+/config
+/webui
