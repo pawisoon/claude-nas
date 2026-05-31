@@ -100,16 +100,133 @@ You don't have to build on the NAS. Every push to `main` kicks off a GitHub Acti
 
 After the first build finishes, make those two packages public (GitHub → your profile → Packages → the package → Package settings → Change visibility → Public) so the NAS can pull them without logging in. If you'd rather keep them private, add `ghcr.io` as a registry in Portainer with a personal access token instead.
 
-Then, in Portainer:
+### Create these folders first
 
-1. **Stacks → Add stack**, and name it `claude-nas-chat` (or `claude-nas-terminal`).
-2. Paste in `portainer/chat-stack.yml` (or `portainer/terminal-stack.yml`) from this repo.
-3. Fill in the environment variables — they're listed at the top of each file.
-4. **Deploy.**
+Over SSH on the NAS (skip `webui` if you only run the terminal stack):
 
-Make sure the `workspace` and `config` folders exist on the NAS and are owned by your `PUID:PGID` first, same as the setup step above.
+```
+sudo mkdir -p /volume1/docker/claude-nas/{workspace,config,webui}
+sudo chown -R 1026:100 /volume1/docker/claude-nas/{workspace,config}
+```
 
-To roll out a new version later, hit **Pull and redeploy** on the stack. Want it hands-off? Turn on the stack's webhook in Portainer and have the workflow ping it after a build, or point Watchtower at the containers.
+| Folder | Mounted at | What it holds |
+|---|---|---|
+| `workspace` | `/workspace` | the only place Claude can read/write — your projects, or point it elsewhere (below) |
+| `config` | `/config` | Claude's settings and login, kept between restarts |
+| `webui` | Open WebUI data | the chat UI's database (chat stack only) |
+
+`workspace` and `config` mount **read-write**, and must be owned by the `PUID:PGID` the container runs as — `1026:100` is the usual Synology admin user/group (run `id` to confirm yours). To point Claude at something else, like a media library, set `WORKSPACE_DIR` to that share instead of the `workspace` folder and make sure that user can write there.
+
+### Terminal stack
+
+Portainer → **Stacks → Add stack** → name it `claude-nas-terminal` → paste this → fill the environment variables → **Deploy**.
+
+```yaml
+services:
+  terminal:
+    image: ghcr.io/pawisoon/claude-nas-terminal:latest
+    container_name: claude-terminal
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - TTYD_USER=${TTYD_USER}
+      - TTYD_PASS=${TTYD_PASS}
+      - TTYD_SHELL=${TTYD_SHELL:-bash}
+      - DISABLE_AUTOUPDATER=1
+    ports:
+      - "${TTYD_PORT:-7681}:7681"
+    volumes:
+      - ${WORKSPACE_DIR}:/workspace
+      - ${CONFIG_DIR}:/config
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+networks:
+  claude-net:
+    driver: bridge
+```
+
+Environment variables: `PUID`, `PGID`, `CLAUDE_CODE_OAUTH_TOKEN`, `TTYD_USER`, `TTYD_PASS`, `WORKSPACE_DIR`, `CONFIG_DIR`, `TTYD_PORT`.
+
+### Chat stack
+
+Same steps, named `claude-nas-chat`:
+
+```yaml
+services:
+  bridge:
+    image: ghcr.io/pawisoon/claude-nas-bridge:latest
+    container_name: claude-bridge
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      - PORT=8000
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
+      - CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
+      - ALLOWED_TOOLS=${ALLOWED_TOOLS:-}
+      - SHOW_TOOL_CALLS=${SHOW_TOOL_CALLS:-true}
+      - MAX_TURNS=${MAX_TURNS:-40}
+    volumes:
+      - ${WORKSPACE_DIR}:/workspace
+      - ${CONFIG_DIR}:/config
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: claude-webui
+    restart: unless-stopped
+    depends_on: [bridge]
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://bridge:8000/v1
+      - OPENAI_API_KEY=${BRIDGE_API_KEY}
+      - ENABLE_OLLAMA_API=false
+      - WEBUI_NAME=Claude NAS
+      - WEBUI_SECRET_KEY=${BRIDGE_API_KEY}
+    volumes:
+      - ${WEBUI_DATA_DIR}:/app/backend/data
+    security_opt: ["no-new-privileges:true"]
+    networks: [claude-net]
+networks:
+  claude-net:
+    driver: bridge
+```
+
+Environment variables: `PUID`, `PGID`, `CLAUDE_CODE_OAUTH_TOKEN`, `BRIDGE_API_KEY`, `WORKSPACE_DIR`, `CONFIG_DIR`, `WEBUI_DATA_DIR`, `WEBUI_PORT`.
+
+### Ports and Synology reverse proxy
+
+Each stack publishes one port on the NAS:
+
+| Stack | NAS port (env) | → container | What it serves |
+|---|---|---|---|
+| Chat | `WEBUI_PORT` (default 3000) | open-webui `:8080` | the chat website |
+| Terminal | `TTYD_PORT` (default 7681) | terminal `:7681` | the web terminal |
+
+The chat stack's `bridge` has **no** published port on purpose — only Open WebUI reaches it, over the internal network. Leave it that way.
+
+To serve either over HTTPS at a hostname, use Synology's reverse proxy — **Control Panel → Login Portal → Advanced → Reverse Proxy → Create**:
+
+- **Source:** HTTPS, your hostname (e.g. `claude.example.com`), port 443.
+- **Destination:** HTTP, `localhost`, port `3000` (chat) or `7681` (terminal).
+- **Custom Header tab → Create → WebSocket.** Required — both Open WebUI and ttyd run over WebSockets and won't work through the proxy without it.
+
+Then reach it at `https://claude.example.com` instead of the raw port. Keep 3000/7681 off the public internet directly; go through the reverse proxy, behind Synology's firewall or a VPN.
+
+### Rolling out updates
+
+New commits to `main` rebuild and push `:latest`. To deploy one, hit **Pull and redeploy** on the stack. For hands-off updates, enable the stack's webhook in Portainer and have the workflow ping it after a build, or run Watchtower against the containers.
 
 ## How it's locked down
 
