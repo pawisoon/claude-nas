@@ -2,7 +2,7 @@
 # The Agent SDK pulls a native Claude Code binary matching the build arch as an
 # OPTIONAL dependency — so the arch you build on must match the arch you run on,
 # and optional deps must NOT be skipped.
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # System tools Claude Code expects (git for repos, ripgrep for search).
 RUN apt-get update && apt-get install -y --no-install-recommends \

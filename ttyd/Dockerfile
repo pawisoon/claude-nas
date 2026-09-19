@@ -1,7 +1,7 @@
 # Terminal variant: the REAL Claude Code TUI served in a browser via ttyd.
 # Ships its own Node (sidesteps Synology's packaged-Node segfault).
 # Build this image ON the NAS (or for its arch) — multi-arch handled below.
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 ARG TTYD_VERSION=1.7.7
 
@@ -27,8 +27,11 @@ RUN set -eux; \
     ttyd --version
 
 # Real Claude Code CLI. Pin to the image (no auto-update mid-session).
+# Bump CLAUDE_CODE_VERSION to upgrade — changing it also busts the CI layer cache.
+ARG CLAUDE_CODE_VERSION=2.1.278
 ENV DISABLE_AUTOUPDATER=1
-RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force \
+    && claude --version
 
 # Claude Code writes config/auth under $HOME/.claude — persist via the /config mount.
 ENV HOME=/config
