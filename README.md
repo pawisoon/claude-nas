@@ -264,8 +264,14 @@ Everything lives in `.env`:
 # Chat
 sudo docker compose pull && sudo docker compose build --no-cache bridge && sudo docker compose up -d
 
-# Terminal (rebuild to pick up a newer Claude Code or ttyd)
+# Terminal
 sudo docker compose -f docker-compose.terminal.yml up -d --build
+```
+
+The terminal image pins Claude Code with `CLAUDE_CODE_VERSION` in `ttyd/Dockerfile` (ttyd with `TTYD_VERSION`), so a rebuild alone won't move it forward. Bump the version there, or override it for one build:
+
+```
+sudo docker compose -f docker-compose.terminal.yml build --build-arg CLAUDE_CODE_VERSION=<version> && sudo docker compose -f docker-compose.terminal.yml up -d
 ```
 
 ## If something's off
