@@ -293,3 +293,11 @@ portainer/                    ready-to-paste Portainer stacks that pull those im
 ## Thanks
 
 Built on [Open WebUI](https://github.com/open-webui/open-webui), [ttyd](https://github.com/tsl0922/ttyd), and the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript). Started from a Synology subreddit thread about the post-update segfault and a comment suggesting Docker to keep it contained.
+
+## Support
+
+If this saves you some SSH-ing, you can chip in:
+
+- [GitHub Sponsors](https://github.com/sponsors/pawisoon)
+- [Buy Me a Coffee](https://buymeacoffee.com/pawisoon)
+- [Suppi](https://suppi.pl/pawels)
