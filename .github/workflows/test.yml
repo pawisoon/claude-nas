@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   smoke:
+    name: smoke (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
