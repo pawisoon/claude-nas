@@ -1,0 +1,66 @@
+name: test-images
+
+# Build both images on every PR (amd64 only, no push) and smoke-test them.
+# Renovate only auto-merges a version bump once these checks are green.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: bridge
+            context: ./bridge
+          - name: terminal
+            context: ./ttyd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: claude-nas-${{ matrix.name }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test bridge
+        if: matrix.name == 'bridge'
+        run: |
+          img=claude-nas-bridge:test
+          # SDK resolves and exports query(); server.js parses.
+          docker run --rm "$img" node -e "import('@anthropic-ai/claude-agent-sdk').then(m => { if (typeof m.query !== 'function') { console.error('query() missing'); process.exit(1) } })"
+          docker run --rm "$img" node --check server.js
+          # Server boots and answers without a token.
+          docker run -d --name bridge -p 8000:8000 "$img"
+          for _ in $(seq 1 30); do curl -fsS http://localhost:8000/health && break; sleep 1; done
+          curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/v1/models
+          docker logs bridge
+
+      - name: Smoke test terminal
+        if: matrix.name == 'terminal'
+        run: |
+          img=claude-nas-terminal:test
+          docker run --rm --entrypoint claude "$img" --version
+          # Refuses to start without credentials.
+          if docker run --rm "$img"; then echo "started without TTYD_USER/TTYD_PASS" >&2; exit 1; fi
+          # Serves the terminal behind basic auth.
+          docker run -d --name terminal -p 7681:7681 -e TTYD_USER=ci -e TTYD_PASS=ci "$img"
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null -u ci:ci http://localhost:7681/ && break; sleep 1; done
+          curl -fsS -o /dev/null -u ci:ci http://localhost:7681/
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:7681/)
+          [ "$code" = "401" ] || { echo "expected 401 without auth, got $code" >&2; exit 1; }
+          docker logs terminal

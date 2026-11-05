@@ -224,6 +224,14 @@ To serve either over HTTPS at a hostname, use Synology's reverse proxy — **Con
 
 Then reach it at `https://claude.example.com` instead of the raw port. Keep 3000/7681 off the public internet directly; go through the reverse proxy, behind Synology's firewall or a VPN.
 
+### Automatic Claude Code updates
+
+[Renovate](https://github.com/apps/renovate) watches npm for new Claude Code and Agent SDK releases (`renovate.json`). Once a week (Monday, before 6am UTC) it opens one PR that bumps both, skipping anything released less than 2 days ago. That PR's CI (`.github/workflows/test.yml`) builds both images and smoke-tests them: the bridge has to boot and answer `/health` and `/v1/models`, and the terminal has to run `claude --version` and serve ttyd behind its password. When those checks pass, Renovate merges the PR.
+
+The merge triggers the normal build. Because the Claude versions changed, `build.yml` also pushes the images under the next patch version (for example `:1.0.2`) and publishes a GitHub release with the version table and image links. Pushes to `main` that don't change the versions still update `:latest` but don't create a release.
+
+Breaking upgrades (a new Claude Code major, or a 0.x minor of the SDK) still open a PR but wait for you to merge them. To turn this on, install the Renovate GitHub app on the repo.
+
 ### Rolling out updates
 
 New commits to `main` rebuild and push `:latest`. To deploy one, hit **Pull and redeploy** on the stack. For hands-off updates, enable the stack's webhook in Portainer and have the workflow ping it after a build, or run Watchtower against the containers.
@@ -268,7 +276,7 @@ sudo docker compose pull && sudo docker compose build --no-cache bridge && sudo 
 sudo docker compose -f docker-compose.terminal.yml up -d --build
 ```
 
-The terminal image pins Claude Code with `CLAUDE_CODE_VERSION` in `ttyd/Dockerfile` (ttyd with `TTYD_VERSION`), so a rebuild alone won't move it forward. Bump the version there, or override it for one build:
+The terminal image pins Claude Code with `CLAUDE_CODE_VERSION` in `ttyd/Dockerfile` (ttyd with `TTYD_VERSION`), so a rebuild alone won't move it forward. Renovate bumps it for you (see [Automatic Claude Code updates](#automatic-claude-code-updates)); to do it by hand, change the version there, or override it for one build:
 
 ```
 sudo docker compose -f docker-compose.terminal.yml build --build-arg CLAUDE_CODE_VERSION=<version> && sudo docker compose -f docker-compose.terminal.yml up -d
@@ -292,7 +300,9 @@ docker-compose.terminal.yml   terminal: build + run locally (ttyd)
 .env.example                  config for both
 bridge/                       the chat backend (Node + the Claude Agent SDK)
 ttyd/                         the terminal (ttyd + the Claude Code CLI)
-.github/workflows/build.yml   builds both images and pushes them to GHCR on every push to main
+.github/workflows/build.yml   builds both images and pushes them to GHCR on every push to main; cuts a release when the Claude versions change
+.github/workflows/test.yml    builds and smoke-tests both images on every PR
+renovate.json                 weekly Claude Code + Agent SDK bump PRs, auto-merged when CI passes
 portainer/                    ready-to-paste Portainer stacks that pull those images
 ```
 
