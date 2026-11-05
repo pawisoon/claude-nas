@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["npm", "custom.regex"],
+  "rangeStrategy": "pin",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Claude Code CLI pinned as a build arg in the terminal image",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ARG \\w+=(?<currentValue>\\S+)"
+      ],
+      "versioningTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Bump the CLI and the Agent SDK together, once a week, after a release has been out for 2 days",
+      "matchPackageNames": ["@anthropic-ai/claude-code", "@anthropic-ai/claude-agent-sdk"],
+      "groupName": "Claude Code",
+      "schedule": ["before 6am on monday"],
+      "minimumReleaseAge": "2 days",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    },
+    {
+      "description": "Breaking upgrades (CLI major, SDK 0.x minor) need a human",
+      "matchPackageNames": ["@anthropic-ai/claude-code", "@anthropic-ai/claude-agent-sdk"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "matchPackageNames": ["@anthropic-ai/claude-agent-sdk"],
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
+    }
+  ]
+}

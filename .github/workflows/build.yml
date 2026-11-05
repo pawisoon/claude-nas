@@ -2,6 +2,10 @@ name: build-images
 
 # Build both images and push them to GHCR on every commit to main.
 # Multi-arch (amd64 + arm64) so any Synology pulls the right one — no NAS build needed.
+#
+# When a push to main changes the Claude Code or Agent SDK version (e.g. a merged
+# Renovate PR), this also cuts a patch release: images get a :X.Y.Z tag and a
+# GitHub release is published once both builds succeed.
 on:
   push:
     branches: [main]
@@ -10,11 +14,56 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.next.outputs.release }}
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags to diff against the last release
+
+      - id: next
+        run: |
+          claude_ver() { sed -n 's/^ARG CLAUDE_CODE_VERSION=//p'; }
+          sdk_ver() { node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).dependencies['@anthropic-ai/claude-agent-sdk'].replace(/^[\^~]/, '')"; }
+
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+          cur_cli=$(claude_ver < ttyd/Dockerfile)
+          cur_sdk=$(sdk_ver < bridge/package.json)
+          if [ -n "$last" ]; then
+            old_cli=$(git show "$last:ttyd/Dockerfile" | claude_ver)
+            old_sdk=$(git show "$last:bridge/package.json" | sdk_ver)
+          fi
+          echo "last=$last cli: ${old_cli:-none} -> $cur_cli  sdk: ${old_sdk:-none} -> $cur_sdk"
+
+          if [ -n "$last" ] && [ "$cur_cli" = "$old_cli" ] && [ "$cur_sdk" = "$old_sdk" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          IFS=. read -r major minor patch <<< "${last#v}"
+          version="${major:-1}.${minor:-0}.$(( ${patch:--1} + 1 ))"
+          echo "Releasing v$version"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         include:
@@ -44,6 +93,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=raw,value=${{ needs.version.outputs.version || 'unreleased' }},enable=${{ needs.version.outputs.release == 'true' }}
             type=sha,format=short
 
       - uses: docker/build-push-action@v6
@@ -55,3 +105,55 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          cli=$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' ttyd/Dockerfile)
+          sdk=$(node -p "require('./bridge/package.json').dependencies['@anthropic-ai/claude-agent-sdk'].replace(/^[\^~]/, '')")
+          ttyd=$(sed -n 's/^ARG TTYD_VERSION=//p' ttyd/Dockerfile)
+          base=$(sed -n 's/^FROM //p' ttyd/Dockerfile | head -1)
+          pkgs="https://github.com/users/$OWNER/packages/container/package"
+
+          cat > notes.md <<EOF
+          Updates Claude Code to $cli and the Claude Agent SDK to $sdk.
+
+          ## Versions in this release
+
+          | Component | Version |
+          |---|---|
+          | Claude Code CLI (terminal image) | $cli |
+          | Claude Agent SDK (chat bridge) | $sdk |
+          | Node base image | \`$base\` |
+          | ttyd | $ttyd |
+
+          ## Images
+
+          Latest (tracks \`main\`, used by the Portainer stacks):
+
+          - [\`ghcr.io/$OWNER/claude-nas-bridge:latest\`]($pkgs/claude-nas-bridge)
+          - [\`ghcr.io/$OWNER/claude-nas-terminal:latest\`]($pkgs/claude-nas-terminal)
+
+          Pinned to this release:
+
+          \`\`\`
+          ghcr.io/$OWNER/claude-nas-bridge:$VERSION
+          ghcr.io/$OWNER/claude-nas-terminal:$VERSION
+          \`\`\`
+
+          To upgrade in Portainer, hit **Pull and redeploy** on the stack.
+          EOF
+
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" \
+            --notes-file notes.md --generate-notes --latest

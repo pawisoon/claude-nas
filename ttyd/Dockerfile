@@ -28,6 +28,8 @@ RUN set -eux; \
 
 # Real Claude Code CLI. Pin to the image (no auto-update mid-session).
 # Bump CLAUDE_CODE_VERSION to upgrade — changing it also busts the CI layer cache.
+# Renovate keeps this current (see renovate.json); keep the marker line directly above the ARG.
+# renovate: datasource=npm depName=@anthropic-ai/claude-code
 ARG CLAUDE_CODE_VERSION=2.1.318
 ENV DISABLE_AUTOUPDATER=1
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force \
