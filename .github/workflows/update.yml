@@ -1,0 +1,134 @@
+name: update-claude-code
+
+# Watch npm for new Claude Code CLI / Agent SDK releases. When one is out:
+#   1. bump ttyd/Dockerfile + bridge/package.json on a throwaway branch,
+#   2. build + smoke-test both images there (reuses test.yml),
+#   3. fast-forward main to that commit and kick off build.yml,
+#      which sees the version change and publishes a new release.
+#
+# Breaking upgrades (CLI major, SDK 0.x minor) are skipped with a warning — bump those by hand.
+# Pushes made with GITHUB_TOKEN don't trigger other workflows, hence the explicit dispatch in step 3.
+on:
+  schedule:
+    - cron: '17 */6 * * *'   # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-claude-code
+  cancel-in-progress: false
+
+env:
+  BRANCH: auto/claude-code-update
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      update: ${{ steps.check.outputs.update }}
+      cli: ${{ steps.check.outputs.cli }}
+      sdk: ${{ steps.check.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        run: |
+          # newer A B -> success when B > A (plain X.Y.Z)
+          newer() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number));for(let i=0;i<3;i++)if(a[i]!==b[i])process.exit(b[i]>a[i]?0:1);process.exit(1)' "$1" "$2"; }
+          # breaking A B -> success when B is a major bump, or a minor bump on 0.x
+          breaking() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number));process.exit(a[0]!==b[0]||(a[0]===0&&a[1]!==b[1])?0:1)' "$1" "$2"; }
+
+          cur_cli=$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' ttyd/Dockerfile)
+          cur_sdk=$(node -p "require('./bridge/package.json').dependencies['@anthropic-ai/claude-agent-sdk']")
+          new_cli=$(npm view @anthropic-ai/claude-code@latest version)
+          new_sdk=$(npm view @anthropic-ai/claude-agent-sdk@latest version)
+          echo "cli: $cur_cli -> $new_cli   sdk: $cur_sdk -> $new_sdk"
+
+          cli=$cur_cli; sdk=$cur_sdk
+          if newer "$cur_cli" "$new_cli"; then
+            if breaking "$cur_cli" "$new_cli"; then
+              echo "::warning::Claude Code $new_cli is a breaking upgrade from $cur_cli; bump it by hand."
+            else
+              cli=$new_cli
+            fi
+          fi
+          if newer "$cur_sdk" "$new_sdk"; then
+            if breaking "$cur_sdk" "$new_sdk"; then
+              echo "::warning::Agent SDK $new_sdk is a breaking upgrade from $cur_sdk; bump it by hand."
+            else
+              sdk=$new_sdk
+            fi
+          fi
+
+          if [ "$cli" = "$cur_cli" ] && [ "$sdk" = "$cur_sdk" ]; then
+            echo "Up to date."
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "cli=$cli" >> "$GITHUB_OUTPUT"
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+
+  bump:
+    needs: check
+    if: needs.check.outputs.update == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: commit
+        env:
+          CLI: ${{ needs.check.outputs.cli }}
+          SDK: ${{ needs.check.outputs.sdk }}
+        run: |
+          sed -i "s/^ARG CLAUDE_CODE_VERSION=.*/ARG CLAUDE_CODE_VERSION=$CLI/" ttyd/Dockerfile
+          node -e '
+            const fs = require("fs"), f = "bridge/package.json";
+            const pkg = JSON.parse(fs.readFileSync(f, "utf8"));
+            pkg.dependencies["@anthropic-ai/claude-agent-sdk"] = process.env.SDK;
+            fs.writeFileSync(f, JSON.stringify(pkg, null, 2) + "\n");
+          '
+          git diff
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update Claude Code to $CLI and Agent SDK to $SDK"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: bump
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.bump.outputs.sha }}
+
+  merge:
+    needs: [check, bump, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write   # dispatch build.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.bump.outputs.sha }}
+        run: |
+          git fetch origin "$BRANCH"
+          # Fails (and retries next run) if main moved meanwhile — never force main.
+          git push origin "$SHA:refs/heads/main"
+          git push origin --delete "$BRANCH"
+          gh workflow run build.yml --ref main
+          {
+            echo "### Updated to Claude Code ${{ needs.check.outputs.cli }} / Agent SDK ${{ needs.check.outputs.sdk }}"
+            echo "Pushed $SHA to main and started build-images, which publishes the release."
+          } >> "$GITHUB_STEP_SUMMARY"

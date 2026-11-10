@@ -3,8 +3,8 @@ name: build-images
 # Build both images and push them to GHCR on every commit to main.
 # Multi-arch (amd64 + arm64) so any Synology pulls the right one — no NAS build needed.
 #
-# When a push to main changes the Claude Code or Agent SDK version (e.g. a merged
-# Renovate PR), this also cuts a patch release: images get a :X.Y.Z tag and a
+# When main's Claude Code or Agent SDK version differs from the last v* tag (e.g. after
+# update.yml bumps them and dispatches this workflow), this also cuts a patch release: images get a :X.Y.Z tag and a
 # GitHub release is published once both builds succeed.
 on:
   push:

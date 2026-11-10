@@ -1,11 +1,17 @@
 name: test-images
 
 # Build both images on every PR (amd64 only, no push) and smoke-test them.
-# Renovate only auto-merges a version bump once these checks are green.
+# update.yml also calls this on its version-bump commit and only merges when it's green.
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to test (defaults to the triggering ref)
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -24,6 +30,8 @@ jobs:
             context: ./ttyd
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: docker/setup-buildx-action@v3
 

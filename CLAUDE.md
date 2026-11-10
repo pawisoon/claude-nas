@@ -22,8 +22,8 @@ docker-compose.terminal.yml   # terminal: ttyd (:7681)
 bridge/  server.js Dockerfile package.json   # chat bridge (built-in http + @anthropic-ai/claude-agent-sdk)
 ttyd/    Dockerfile entrypoint.sh            # ttyd static binary + real @anthropic-ai/claude-code CLI
 .github/workflows/build.yml   # CI: multi-arch build of both images -> GHCR on push to main; auto-release on version bump
-.github/workflows/test.yml    # CI: amd64 build + smoke test of both images on PRs (gates Renovate automerge)
-renovate.json                 # weekly grouped bump of claude-code (Dockerfile ARG) + agent SDK, automerge
+.github/workflows/test.yml    # CI: amd64 build + smoke test of both images on PRs; reusable (called by update.yml)
+.github/workflows/update.yml  # cron 6h: npm latest -> bump branch -> test.yml -> ff main -> dispatch build.yml
 portainer/  chat-stack.yml terminal-stack.yml   # image-based composes for Portainer (pull from GHCR)
 ```
 
@@ -33,8 +33,9 @@ portainer/  chat-stack.yml terminal-stack.yml   # image-based composes for Porta
   `ghcr.io/pawisoon/*` on every push to main (+ `v*` tags). Uses GITHUB_TOKEN, `packages: write`.
 - When a push to main changes `CLAUDE_CODE_VERSION` or the pinned SDK version vs the last `v*` tag, `build.yml`
   also tags images `:X.Y.Z` (patch+1) and publishes a GitHub release after both builds pass.
-- Renovate (GitHub app) opens the bump PRs; keep the `# renovate:` marker line directly above `ARG CLAUDE_CODE_VERSION`
-  and keep the SDK pinned exactly (no `^`) so CI tests what ships.
+- `update.yml` does the bumps (no Renovate/app). It rewrites the `ARG CLAUDE_CODE_VERSION=` line and the SDK pin, so
+  keep that line format and keep the SDK pinned exactly (no `^`) so CI tests what ships. Skips breaking bumps.
+  GITHUB_TOKEN pushes don't trigger workflows, so it dispatches `build.yml` explicitly after pushing main.
 - Make the GHCR packages **public** after first build, or add ghcr creds in Portainer.
 - Local dev still uses the `build:` composes; Portainer/prod uses the image-based `portainer/` composes.
 
