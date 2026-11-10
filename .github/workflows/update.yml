@@ -25,13 +25,13 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       update: ${{ steps.check.outputs.update }}
       cli: ${{ steps.check.outputs.cli }}
       sdk: ${{ steps.check.outputs.sdk }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: check
         run: |
@@ -74,13 +74,13 @@ jobs:
   bump:
     needs: check
     if: needs.check.outputs.update == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: commit
         env:
@@ -110,12 +110,12 @@ jobs:
 
   merge:
     needs: [check, bump, test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       actions: write   # dispatch build.yml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
