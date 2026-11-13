@@ -29,7 +29,7 @@ RUN set -eux; \
 # Real Claude Code CLI. Pin to the image (no auto-update mid-session).
 # Bump CLAUDE_CODE_VERSION to upgrade — changing it also busts the CI layer cache.
 # .github/workflows/update.yml keeps this current; it rewrites the `ARG CLAUDE_CODE_VERSION=` line.
-ARG CLAUDE_CODE_VERSION=2.1.322
+ARG CLAUDE_CODE_VERSION=2.1.323
 ENV DISABLE_AUTOUPDATER=1
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force \
     && claude --version
